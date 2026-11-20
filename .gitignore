@@ -1,0 +1,9 @@
+# Per-device data: never publish (factory calibration, MACs, serials, ArubaOS)
+*.bin
+*.ari
+*.itb
+*.dump
+*.log
+
+# OpenWrt build tree, if cloned inside this repo
+openwrt/

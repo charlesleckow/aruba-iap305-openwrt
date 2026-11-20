@@ -1,0 +1,344 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/*
+ * Aruba AP-305 / IAP-305 (Glenmorangie family, IPQ4029 + QCA9990)
+ *
+ * Derived from upstream qcom-ipq4029-ap-365.dts and the community AP-305
+ * port by Fr4ctbyte (github.com/Fr4ctbyte/OpenWRT-Aruba305), reviewed and
+ * hardened:
+ *
+ *  - SPI-NOR chip select declared active-low (matches the hardware and
+ *    current OpenWrt main for ap-303/ap-365).
+ *  - gpio61 / gpio68 (Wi-Fi LEDs) removed from the NAND pinmux group so the
+ *    LED driver never re-muxes a pin that the QPIC NAND controller owns.
+ *  - PCIe "wake-gpio" dropped: the qcom PCIe driver ignores it, and gpio50
+ *    is already claimed by the reset button in the Glenmorangie dtsi.
+ *  - Every SPI-NOR partition except u-boot-env stays read-only, the ART
+ *    (radio calibration) partition is read-only, and NAND "aos0" (stock
+ *    ArubaOS) stays read-only. OpenWrt only ever writes NAND "aos1" (ubi).
+ *
+ * GPIOs that must never be driven by OpenWrt (do not add them anywhere):
+ *   2  - board reset (low = instant reset)
+ *   39 - watchdog status flip-flop reset
+ *   40 - watchdog enable
+ */
+
+#include "qcom-ipq4029-aruba-glenmorangie.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/soc/qcom,tcsr.h>
+
+/ {
+	model = "Aruba AP-305";
+	compatible = "aruba,ap-305";
+
+	/*
+	 * Verified on an IAP-305-US: APBoot and the console header use
+	 * blsp1_uart1 (0x78af000, gpio16/17), not blsp1_uart2 as on AP-303/365.
+	 * Pin the numbering so the console is always ttyMSM0.
+	 */
+	chosen {
+		stdout-path = "serial0:9600n8";
+	};
+
+	aliases {
+		serial0 = &blsp1_uart1;
+		serial1 = &blsp1_uart2;
+		led-boot = &led_status_green;
+		led-failsafe = &led_status_red;
+		led-running = &led_status_green;
+		led-upgrade = &led_status_amber;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		led_status_green: led-0 {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&tlmm 37 GPIO_ACTIVE_HIGH>;
+		};
+
+		led_status_red: led-1 {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_RED>;
+			gpios = <&tlmm 52 GPIO_ACTIVE_HIGH>;
+		};
+
+		led_status_amber: led-2 {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_AMBER>;
+			gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
+		};
+
+		led-3 {
+			function = LED_FUNCTION_WLAN;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&tlmm 51 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "phy1tpt";	/* 5 GHz (QCA9990) */
+		};
+
+		led-4 {
+			function = LED_FUNCTION_WLAN;
+			color = <LED_COLOR_ID_RED>;
+			gpios = <&tlmm 68 GPIO_ACTIVE_HIGH>;
+		};
+
+		led-5 {
+			function = LED_FUNCTION_WLAN;
+			color = <LED_COLOR_ID_AMBER>;
+			gpios = <&tlmm 61 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "phy0tpt";	/* 2.4 GHz (IPQ4019) */
+		};
+	};
+
+	/*
+	 * External watchdog flip-flop. AP-365 pokes gpio41; on AP-305 it is
+	 * gpio3. If this is wrong the AP simply resets ~every 60 s and can be
+	 * recovered from APBoot - it cannot damage anything.
+	 */
+	watchdog {
+		compatible = "linux,wdt-gpio";
+		gpios = <&tlmm 3 GPIO_ACTIVE_LOW>;
+		hw_algo = "toggle";
+		hw_margin_ms = <1000>;
+		always-running;
+	};
+
+	soc {
+		tcsr@194b000 {
+			compatible = "qcom,tcsr";
+			reg = <0x194b000 0x100>;
+			qcom,usb-hsphy-mode-select = <TCSR_USB_HSPHY_HOST_MODE>;
+		};
+	};
+};
+
+&tlmm {
+	/* AR8035 PHY enable - held high exactly as stock ArubaOS leaves it. */
+	phy-reset {
+		line-name = "PHY-reset";
+		gpios = <47 GPIO_ACTIVE_HIGH>;
+		gpio-hog;
+		output-high;
+	};
+
+	/* USB VBUS load switch. */
+	usb-power {
+		line-name = "USB-power";
+		gpios = <18 GPIO_ACTIVE_HIGH>;
+		gpio-hog;
+		output-high;
+	};
+};
+
+/*
+ * The dtsi assigns gpio53..gpio69 to the NAND controller, but on this board
+ * gpio61 and gpio68 are Wi-Fi LEDs, not NAND lines. Remove them from the
+ * NAND group so pinctrl and leds-gpio never fight over them.
+ */
+&nand_pins {
+	pulldowns {
+		pins = "gpio54", "gpio55", "gpio56",
+			"gpio57", "gpio60",
+			"gpio62", "gpio63", "gpio64",
+			"gpio65", "gpio66", "gpio67",
+			"gpio69";
+	};
+};
+
+/* Console UART on this board (the dtsi labels it as the BLE radio). */
+&blsp1_uart1 {
+	status = "okay";
+};
+
+&blsp1_i2c3 {
+	power-monitor@40 {
+		/* No driver */
+		compatible = "isl,isl28022";
+		reg = <0x40>;
+	};
+
+	temperature-sensor@48 {
+		compatible = "adi,ad7416";
+		reg = <0x48>;
+	};
+};
+
+&blsp1_spi1 {
+	pinctrl-0 = <&spi_0_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+	cs-gpios = <&tlmm 12 GPIO_ACTIVE_LOW>;
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <24000000>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/* Same NOR map as AP-365 (from Aruba U-Boot GPL + smem). */
+
+			partition@0 {
+				label = "sbl1";
+				reg = <0x0 0x40000>;
+				read-only;
+			};
+
+			partition@40000 {
+				label = "mibib";
+				reg = <0x40000 0x20000>;
+				read-only;
+			};
+
+			partition@60000 {
+				label = "qsee";
+				reg = <0x60000 0x60000>;
+				read-only;
+			};
+
+			partition@c0000 {
+				label = "cdt";
+				reg = <0xc0000 0x10000>;
+				read-only;
+			};
+
+			partition@d0000 {
+				label = "ddrparams";
+				reg = <0xd0000 0x10000>;
+				read-only;
+			};
+
+			/* The only writable NOR partition (APBoot environment). */
+			partition@e0000 {
+				label = "u-boot-env";
+				reg = <0xe0000 0x10000>;
+			};
+
+			partition@f0000 {
+				label = "appsbl";
+				reg = <0xf0000 0x100000>;
+				read-only;
+			};
+
+			partition@1f0000 {
+				label = "ART";
+				reg = <0x1f0000 0x10000>;
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					/* 2.4 GHz IPQ4019 (wifi0, referenced by the dtsi) */
+					precal_art_1000: precal@1000 {
+						reg = <0x1000 0x2f20>;
+					};
+
+					/* Referenced by the dtsi's wifi1, which is disabled here */
+					precal_art_5000: precal@5000 {
+						reg = <0x5000 0x2f20>;
+					};
+
+					/* 5 GHz QCA9990 on PCIe */
+					precal_art_9000: precal@9000 {
+						reg = <0x9000 0x2f20>;
+					};
+				};
+			};
+
+			partition@200000 {
+				label = "osss";
+				reg = <0x200000 0x170000>;
+				read-only;
+			};
+
+			partition@370000 {
+				label = "pds";
+				reg = <0x370000 0x10000>;
+				read-only;
+			};
+
+			partition@380000 {
+				label = "apcd";
+				reg = <0x380000 0x10000>;
+				read-only;
+			};
+
+			partition@390000 {
+				label = "mfginfo";
+				reg = <0x390000 0x10000>;
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					macaddr_mfginfo_1d: macaddr@1d {
+						compatible = "mac-base";
+						reg = <0x1d 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+
+			partition@3a0000 {
+				label = "fcache";
+				reg = <0x3a0000 0x10000>;
+				read-only;
+			};
+
+			partition@3b0000 {
+				label = "osss1";
+				reg = <0x3b0000 0x50000>;
+				read-only;
+			};
+		};
+	};
+};
+
+&wifi0 {
+	qcom,ath10k-calibration-variant = "Aruba-AP-305";
+};
+
+/* The IPQ4019's internal 5 GHz radio is not wired on the AP-305. */
+&wifi1 {
+	status = "disabled";
+};
+
+&pcie0 {
+	status = "okay";
+	perst-gpios = <&tlmm 38 GPIO_ACTIVE_LOW>;
+
+	bridge@0,0 {
+		reg = <0x00000000 0 0 0 0>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges;
+
+		wifi2: wifi@1,0 {
+			compatible = "qcom,ath10k";
+			reg = <0x00010000 0 0 0 0>;
+			nvmem-cell-names = "pre-calibration", "mac-address";
+			nvmem-cells = <&precal_art_9000>, <&macaddr_mfginfo_1d 2>;
+			qcom,ath10k-calibration-variant = "Aruba-AP-305";
+		};
+	};
+};
+
+&usb3 {
+	status = "okay";
+};
+
+&usb3_hs_phy {
+	status = "okay";
+};
+
+&usb3_ss_phy {
+	status = "okay";
+};
