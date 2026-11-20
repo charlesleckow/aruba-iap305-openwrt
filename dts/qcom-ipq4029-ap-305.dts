@@ -43,6 +43,15 @@
 	aliases {
 		serial0 = &blsp1_uart1;
 		serial1 = &blsp1_uart2;
+		/*
+		 * /dev/watchdog (used by procd) must be the SoC watchdog. The
+		 * external watchdog on gpio3 resets the board when it is kicked
+		 * in quick bursts, which procd does whenever it opens the device
+		 * or changes its timeout. Leave gpio3 to the kernel's steady
+		 * 500 ms keepalive only. Verified on an IAP-305-US.
+		 */
+		watchdog0 = &watchdog;
+		watchdog1 = &gpio_watchdog;
 		led-boot = &led_status_green;
 		led-failsafe = &led_status_red;
 		led-running = &led_status_green;
@@ -92,11 +101,11 @@
 	};
 
 	/*
-	 * External watchdog flip-flop. AP-365 pokes gpio41; on AP-305 it is
-	 * gpio3. If this is wrong the AP simply resets ~every 60 s and can be
-	 * recovered from APBoot - it cannot damage anything.
+	 * External watchdog. AP-365 pokes gpio41; on AP-305 it is gpio3.
+	 * Unfed, it resets the board ~60 s after APBoot hands over (verified).
+	 * It is exposed as watchdog1 (see aliases) so userspace never opens it.
 	 */
-	watchdog {
+	gpio_watchdog: watchdog {
 		compatible = "linux,wdt-gpio";
 		gpios = <&tlmm 3 GPIO_ACTIVE_LOW>;
 		hw_algo = "toggle";
@@ -149,6 +158,17 @@
 /* Console UART on this board (the dtsi labels it as the BLE radio). */
 &blsp1_uart1 {
 	status = "okay";
+};
+
+/*
+ * The dtsi disables the pull on gpio16/17; keep the console RX line
+ * idle-high so it doesn't pick up noise with no serial adapter attached.
+ */
+&serial_0_pins {
+	mux {
+		/delete-property/ bias-disable;
+		bias-pull-up;
+	};
 };
 
 &blsp1_i2c3 {

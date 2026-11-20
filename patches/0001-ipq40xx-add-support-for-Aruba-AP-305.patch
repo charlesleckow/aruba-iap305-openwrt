@@ -1,6 +1,6 @@
-From a80288c0b21cc42732ffd73e53b8294a707d48cd Mon Sep 17 00:00:00 2001
+From f58b976f49f59e2d41adc8db696c2a00aae48fb6 Mon Sep 17 00:00:00 2001
 From: AP-305 port <local@localhost>
-Date: Fri, 20 Nov 2026 00:16:00 -0500
+Date: Fri, 20 Nov 2026 11:01:32 -0500
 Subject: [PATCH] ipq40xx: add support for Aruba AP-305
 
 Aruba AP-305 / IAP-305: IPQ4029 (Glenmorangie family) with the 2.4 GHz
@@ -9,16 +9,18 @@ radio on the IPQ4019 and 5 GHz on an external QCA9990 (PCIe).
 Based on qcom-ipq4029-ap-365.dts and the community port at
 github.com/Fr4ctbyte/OpenWRT-Aruba305, with SPI-CS polarity fixed,
 LED pins removed from the NAND pinmux group, unused PCIe wake-gpio
-dropped, fw_printenv support (u-boot-env on mtd8, as AP-365), and the
-serial console moved to blsp1_uart1 (ttyMSM0), as verified on an
-IAP-305-US.
+dropped, fw_printenv support (u-boot-env on mtd8, as AP-365), the
+serial console moved to blsp1_uart1 (ttyMSM0), and watchdog aliases
+so procd uses the SoC watchdog: the external gpio3 watchdog resets
+the board when kicked in bursts, which procd does on open and on
+timeout changes. Verified on an IAP-305-US.
 ---
  package/boot/uboot-envtools/files/ipq40xx     |   1 +
  .../ipq40xx/base-files/etc/board.d/02_network |   1 +
  .../base-files/lib/upgrade/platform.sh        |   1 +
- .../arm/boot/dts/qcom/qcom-ipq4029-ap-305.dts | 344 ++++++++++++++++++
+ .../arm/boot/dts/qcom/qcom-ipq4029-ap-305.dts | 364 ++++++++++++++++++
  target/linux/ipq40xx/image/generic.mk         |   8 +
- 5 files changed, 355 insertions(+)
+ 5 files changed, 375 insertions(+)
  create mode 100644 target/linux/ipq40xx/files-6.6/arch/arm/boot/dts/qcom/qcom-ipq4029-ap-305.dts
 
 diff --git a/package/boot/uboot-envtools/files/ipq40xx b/package/boot/uboot-envtools/files/ipq40xx
@@ -59,10 +61,10 @@ index 53a95611..7277e3c4 100644
  	avm,fritzrepeater-1200 |\
 diff --git a/target/linux/ipq40xx/files-6.6/arch/arm/boot/dts/qcom/qcom-ipq4029-ap-305.dts b/target/linux/ipq40xx/files-6.6/arch/arm/boot/dts/qcom/qcom-ipq4029-ap-305.dts
 new file mode 100644
-index 00000000..ee5518c6
+index 00000000..cc9eba30
 --- /dev/null
 +++ b/target/linux/ipq40xx/files-6.6/arch/arm/boot/dts/qcom/qcom-ipq4029-ap-305.dts
-@@ -0,0 +1,344 @@
+@@ -0,0 +1,364 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR MIT
 +/*
 + * Aruba AP-305 / IAP-305 (Glenmorangie family, IPQ4029 + QCA9990)
@@ -108,6 +110,15 @@ index 00000000..ee5518c6
 +	aliases {
 +		serial0 = &blsp1_uart1;
 +		serial1 = &blsp1_uart2;
++		/*
++		 * /dev/watchdog (used by procd) must be the SoC watchdog. The
++		 * external watchdog on gpio3 resets the board when it is kicked
++		 * in quick bursts, which procd does whenever it opens the device
++		 * or changes its timeout. Leave gpio3 to the kernel's steady
++		 * 500 ms keepalive only. Verified on an IAP-305-US.
++		 */
++		watchdog0 = &watchdog;
++		watchdog1 = &gpio_watchdog;
 +		led-boot = &led_status_green;
 +		led-failsafe = &led_status_red;
 +		led-running = &led_status_green;
@@ -157,11 +168,11 @@ index 00000000..ee5518c6
 +	};
 +
 +	/*
-+	 * External watchdog flip-flop. AP-365 pokes gpio41; on AP-305 it is
-+	 * gpio3. If this is wrong the AP simply resets ~every 60 s and can be
-+	 * recovered from APBoot - it cannot damage anything.
++	 * External watchdog. AP-365 pokes gpio41; on AP-305 it is gpio3.
++	 * Unfed, it resets the board ~60 s after APBoot hands over (verified).
++	 * It is exposed as watchdog1 (see aliases) so userspace never opens it.
 +	 */
-+	watchdog {
++	gpio_watchdog: watchdog {
 +		compatible = "linux,wdt-gpio";
 +		gpios = <&tlmm 3 GPIO_ACTIVE_LOW>;
 +		hw_algo = "toggle";
@@ -214,6 +225,17 @@ index 00000000..ee5518c6
 +/* Console UART on this board (the dtsi labels it as the BLE radio). */
 +&blsp1_uart1 {
 +	status = "okay";
++};
++
++/*
++ * The dtsi disables the pull on gpio16/17; keep the console RX line
++ * idle-high so it doesn't pick up noise with no serial adapter attached.
++ */
++&serial_0_pins {
++	mux {
++		/delete-property/ bias-disable;
++		bias-pull-up;
++	};
 +};
 +
 +&blsp1_i2c3 {

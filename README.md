@@ -55,6 +55,8 @@ This is based on OpenWrt's AP-365 support and on [Fr4ctbyte/OpenWRT-Aruba305](ht
 
 - **Serial console on `ttyMSM0` (UART @ 0x78af000).** With the AP-303/AP-365 setting (`ttyMSM1`), the test unit gave no kernel output. The DTS now pins the `serial0`/`serial1` aliases and a `stdout-path`. Your APBoot `bootargs` still need `console=ttyMSM0,9600n8`, because a `console=` on the command line overrides the DTS.
 - **Serial header wiring differs from Fr4ctbyte's docs** on this unit; see step 1.
+- **procd uses the SoC watchdog, not the external one (fixes a boot loop).** The AP-305's external watchdog (fed by gpio3) resets the board when it's kicked in quick bursts. procd sends such a burst whenever it opens `/dev/watchdog` or changes the timeout, so earlier builds reset at random during boot, usually around `init: - watchdog -` (≈15 s) or `procd: - early -` (≈25 s). Watchdog aliases in the DTS now make the SoC watchdog `watchdog0`/`/dev/watchdog`. The external chip is fed only by the kernel's steady 500 ms keepalive. Builds before `v24.10.7-2` have this bug.
+- **Pull-up on the console UART pins (gpio16/17)**, so the RX line doesn't float when no serial adapter is attached.
 - **The patch includes the DTS file.** Fr4ctbyte's `0001` patch doesn't.
 - **SPI-NOR chip select declared active-low**, as in current OpenWrt main for AP-303/AP-365.
 - **gpio61 and gpio68 (Wi-Fi LEDs) removed from the NAND pinmux group**, so the NAND controller and the LED driver never claim the same pin.
